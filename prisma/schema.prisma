@@ -21,6 +21,7 @@ model User {
 model Image {
   id        String   @id @default(uuid())
   url       String
+  description String?
   createdAt DateTime @default(now())
   userId    String
   user      User     @relation(fields: [userId], references: [id])
