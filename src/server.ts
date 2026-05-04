@@ -21,7 +21,7 @@ const start = async () => {
     await app.register(cors, {
       origin: config.clientUrl,
       methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-description'],
       credentials: true,
     });
     const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-please-change';

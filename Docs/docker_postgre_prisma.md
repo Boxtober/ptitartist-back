@@ -1,6 +1,6 @@
-# 🚀 Guide complet : Docker + PostgreSQL + Prisma (setup backend moderne)
 
-## 🧠 Objectif du guide
+
+## 🧠 Objectif 
 
 Ce document explique pas à pas comment installer et comprendre un environnement backend basé sur :
 
