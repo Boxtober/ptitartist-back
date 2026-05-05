@@ -14,8 +14,13 @@ model User {
   lastName  String?
   age       Int?
   avatarUrl String?
+  // user preferences / settings
+  isPrivateProfile Boolean  @default(true)
+  emailReminders   Boolean  @default(false)
+  autoBackup       Boolean  @default(false)
   createdAt DateTime @default(now())
   images    Image[]  
+  favorites Favorite[]
   children  Child[]
 }
 
@@ -28,6 +33,7 @@ model Image {
   childId   String?
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   child     Child?   @relation(fields: [childId], references: [id], onDelete: SetNull)
+  favorites Favorite[]
   @@index([userId])
   @@index([childId])
 }
@@ -44,4 +50,16 @@ model Child {
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   images     Image[]
   @@index([userId])
+}
+
+model Favorite {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  image     Image    @relation(fields: [imageId], references: [id])
+  imageId   String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, imageId])
+  @@index([imageId])
 }

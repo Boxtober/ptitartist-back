@@ -5,6 +5,7 @@ import { prisma } from '../plugins/prisma.js';
 import fs from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
+import archiver from 'archiver';
 
 // Zod schemas for children and image uploads
 const createChildSchema = z.object({
@@ -52,7 +53,7 @@ export async function authRoutes(app: FastifyInstance) {
     }
     const { email, password, firstName, lastName, age, avatarUrl } = result.data;
 
-    const userExists = await prisma.user.findUnique({ where: { email } });
+  const userExists = await (prisma as any).user.findUnique({ where: { email } });
     if (userExists) return reply.status(400).send({ error: 'User already exists' });
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -74,7 +75,7 @@ export async function authRoutes(app: FastifyInstance) {
   app.post('/login', async (request, reply) => {
     const { email, password } = request.body as { email: string; password: string };
 
-    const user = await prisma.user.findUnique({ where: { email } });
+  const user = await (prisma as any).user.findUnique({ where: { email } });
     if (!user) return reply.status(401).send({ error: 'Invalid credentials' });
 
     const valid = await bcrypt.compare(password, user.password);
@@ -88,7 +89,7 @@ export async function authRoutes(app: FastifyInstance) {
     try {
       await (request as any).jwtVerify();
       const { id } = (request as any).user as { id: string };
-      const user = await prisma.user.findUnique({
+  const user = await (prisma as any).user.findUnique({
         where: { id },
         select: {
           id: true,
@@ -116,7 +117,7 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid input', details: result.error.flatten() });
       }
 
-      const updated = await (prisma as any).user.update({
+  const updated = await (prisma as any).user.update({
         where: { id },
         data: result.data as any,
         select: {
@@ -172,7 +173,7 @@ export async function authRoutes(app: FastifyInstance) {
 
       // if childId provided, verify ownership
       if (parsedChildId) {
-        const child = await (prisma as any).child.findUnique({ where: { id: parsedChildId } });
+  const child = await (prisma as any).child.findUnique({ where: { id: parsedChildId } });
         if (!child || child.userId !== userId) return reply.status(403).send({ error: 'Child not found or forbidden' });
       }
 
@@ -195,24 +196,47 @@ export async function authRoutes(app: FastifyInstance) {
     }
   });
 
+  // app.get('/images', async (request, reply) => {
+  //   await (request as any).jwtVerify();
+  //   const { id } = (request as any).user as { id: string };
+
+  //     const images = await (prisma as any).image.findMany({
+  //       where: { userId: id },
+  //       orderBy: { createdAt: 'desc' },
+  //       include: { child: { select: { id: true, firstName: true } } },
+  //     });
+
+  //   return reply.send(images);
+  // });
+
   app.get('/images', async (request, reply) => {
-    await (request as any).jwtVerify();
-    const { id } = (request as any).user as { id: string };
+  await (request as any).jwtVerify();
+  const { id: userId } = (request as any).user as { id: string };
 
-      const images = await (prisma as any).image.findMany({
-        where: { userId: id },
-        orderBy: { createdAt: 'desc' },
-        include: { child: { select: { id: true, firstName: true } } },
-      });
-
-    return reply.send(images);
+  const images = await (prisma as any).image.findMany({
+    where: { userId }, // ta logique existante
+    orderBy: { createdAt: 'desc' },
+    include: {
+      child: { select: { id: true, firstName: true } },
+    },
   });
 
+  // fetch favorites for this user for these images
+  const imageIds = images.map((i: any) => i.id);
+  const favorites = await (prisma as any).favorite.findMany({
+    where: { userId, imageId: { in: imageIds } },
+    select: { imageId: true }
+  });
+  const favoritesSet = new Set(favorites.map((f: any) => f.imageId));
+  const imagesWithFlag = images.map((i: any) => ({ ...i, isFavorite: favoritesSet.has(i.id) }));
+
+  return reply.send(imagesWithFlag);
+});
   // CHILDREN CRUD
   app.get('/children', async (request, reply) => {
     await (request as any).jwtVerify();
     const { id } = (request as any).user as { id: string };
-    const children = await (prisma as any).child.findMany({ where: { userId: id }, orderBy: { createdAt: 'desc' } });
+  const children = await (prisma as any).child.findMany({ where: { userId: id }, orderBy: { createdAt: 'desc' } });
     return reply.send(children);
   });
 
@@ -224,7 +248,7 @@ export async function authRoutes(app: FastifyInstance) {
       if (!result.success) return reply.status(400).send({ error: 'Invalid input', details: result.error.flatten() });
 
       const data = result.data;
-      const created = await (prisma as any).child.create({ data: { ...data, userId } });
+  const created = await (prisma as any).child.create({ data: { ...data, userId } });
       return reply.status(201).send(created);
     } catch (err: any) {
       console.error('Create child error:', err);
@@ -238,14 +262,14 @@ export async function authRoutes(app: FastifyInstance) {
       const { id: childId } = request.params as { id: string };
       const { id: userId } = (request as any).user as { id: string };
 
-      const existing = await (prisma as any).child.findUnique({ where: { id: childId } });
+  const existing = await (prisma as any).child.findUnique({ where: { id: childId } });
       if (!existing) return reply.status(404).send({ error: 'Child not found' });
       if (existing.userId !== userId) return reply.status(403).send({ error: 'Forbidden' });
 
       const result = updateChildSchema.safeParse(request.body);
       if (!result.success) return reply.status(400).send({ error: 'Invalid input', details: result.error.flatten() });
 
-      const updated = await (prisma as any).child.update({ where: { id: childId }, data: result.data });
+  const updated = await (prisma as any).child.update({ where: { id: childId }, data: result.data });
       return reply.send(updated);
     } catch (err: any) {
       console.error('Update child error:', err);
@@ -264,8 +288,8 @@ export async function authRoutes(app: FastifyInstance) {
       if (existing.userId !== userId) return reply.status(403).send({ error: 'Forbidden' });
 
       // Decide behavior: set childId null on images (as schema uses SetNull)
-      await (prisma as any).image.updateMany({ where: { childId }, data: { childId: null } });
-      await (prisma as any).child.delete({ where: { id: childId } });
+  await (prisma as any).image.updateMany({ where: { childId }, data: { childId: null } });
+  await (prisma as any).child.delete({ where: { id: childId } });
 
       return reply.send({ success: true });
     } catch (err: any) {
@@ -279,7 +303,7 @@ export async function authRoutes(app: FastifyInstance) {
       await (request as any).jwtVerify();
       const { id } = (request as any).user as { id: string };
 
-      const images = await (prisma as any).image.findMany({ where: { userId: id } });
+  const images = await (prisma as any).image.findMany({ where: { userId: id } });
 
       for (const img of images) {
         try {
@@ -309,9 +333,9 @@ export async function authRoutes(app: FastifyInstance) {
         }
       }
 
-      await (prisma as any).image.deleteMany({ where: { userId: id } });
+  await (prisma as any).image.deleteMany({ where: { userId: id } });
 
-      await (prisma as any).user.delete({ where: { id } });
+  await (prisma as any).user.delete({ where: { id } });
 
       return reply.send({ success: true });
     } catch (err: any) {
@@ -325,7 +349,7 @@ export async function authRoutes(app: FastifyInstance) {
     const { id: imageId } = request.params as { id: string };
     const { createdAt, description, childId } = request.body as { createdAt?: string; description?: string; childId?: string };
 
-      const existing = await (prisma as any).image.findUnique({ where: { id: imageId } });
+  const existing = await (prisma as any).image.findUnique({ where: { id: imageId } });
     if (!existing) return reply.status(404).send({ error: 'Image not found' });
     if (existing.userId !== (request as any).user.id) {
       return reply.status(403).send({ error: 'Forbidden' });
@@ -339,27 +363,26 @@ export async function authRoutes(app: FastifyInstance) {
         if (childId === '') {
           dataToUpdate.childId = null;
         } else {
-          const child = await (prisma as any).child.findUnique({ where: { id: childId } });
-          if (!child || child.userId !== (request as any).user.id) return reply.status(403).send({ error: 'Child not found or forbidden' });
+            const child = await (prisma as any).child.findUnique({ where: { id: childId } });
+            if (!child || child.userId !== (request as any).user.id) return reply.status(403).send({ error: 'Child not found or forbidden' });
           dataToUpdate.childId = childId;
         }
       }
 
-      const updated = await (prisma as any).image.update({
+      const updated = await prisma.image.update({
         where: { id: imageId },
         data: dataToUpdate,
       });
 
     return reply.send(updated);
   });
+  // Reusable image deletion logic (used by /images/:id and alias /upload/:id)
+  async function deleteImageById(imageId: string, request: any, reply: any) {
+    await request.jwtVerify();
 
-  app.delete('/images/:id', async (request, reply) => {
-    await (request as any).jwtVerify();
-    const { id: imageId } = request.params as { id: string };
-
-    const existing = await (prisma as any).image.findUnique({ where: { id: imageId } });
+    const existing = await prisma.image.findUnique({ where: { id: imageId } });
     if (!existing) return reply.status(404).send({ error: 'Image not found' });
-    if (existing.userId !== (request as any).user.id) {
+    if (existing.userId !== request.user.id) {
       return reply.status(403).send({ error: 'Forbidden' });
     }
 
@@ -380,6 +403,7 @@ export async function authRoutes(app: FastifyInstance) {
           await fs.promises.unlink(filePath);
         } catch (err: any) {
           if (err.code && err.code === 'ENOENT') {
+            // already gone, ignore
           } else {
             console.error('Error removing file:', err);
           }
@@ -391,5 +415,121 @@ export async function authRoutes(app: FastifyInstance) {
 
     const deleted = await (prisma as any).image.delete({ where: { id: imageId } });
     return reply.send({ success: true, deleted });
+  }
+app.post('/images/:id/favorite', async (request, reply) => {
+  await (request as any).jwtVerify();
+  const { id: imageId } = request.params as { id: string };
+  const { id: userId } = (request as any).user as { id: string };
+
+  // Optionnel : vérifier que l'image existe
+  const image = await (prisma as any).image.findUnique({ where: { id: imageId } });
+  if (!image) return reply.status(404).send({ error: 'Image not found' });
+
+  try {
+    const fav = await (prisma as any).favorite.create({
+      data: { userId, imageId },
+    });
+    return reply.status(201).send(fav);
+  } catch (err: any) {
+    // si unique constraint violée -> déjà favori
+    return reply.status(400).send({ error: 'Already favorited' });
+  }
+});
+
+app.delete('/images/:id/favorite', async (request, reply) => {
+  await (request as any).jwtVerify();
+  const { id: imageId } = request.params as { id: string };
+  const { id: userId } = (request as any).user as { id: string };
+
+  await (prisma as any).favorite.deleteMany({ where: { userId, imageId } });
+  return reply.send({ success: true });
+});
+  // Keep original route
+  app.delete('/images/:id', async (request, reply) => {
+    const { id: imageId } = request.params as { id: string };
+    return deleteImageById(imageId, request, reply);
+  });
+
+  // Alias for backwards-compatibility: some frontends call /upload/:id
+  app.delete('/upload/:id', async (request, reply) => {
+    const { id: imageId } = request.params as { id: string };
+    return deleteImageById(imageId, request, reply);
+  });
+
+  // SETTINGS endpoints
+  app.get('/settings', async (request, reply) => {
+    await (request as any).jwtVerify();
+    const { id } = (request as any).user as { id: string };
+    const user = await (prisma as any).user.findUnique({ where: { id }, select: { isPrivateProfile: true, emailReminders: true, autoBackup: true } });
+    return reply.send(user ?? {});
+  });
+
+  const settingsSchema = z.object({
+    isPrivateProfile: z.boolean().optional(),
+    emailReminders: z.boolean().optional(),
+    autoBackup: z.boolean().optional(),
+  });
+
+  app.put('/settings', async (request, reply) => {
+    try {
+      await (request as any).jwtVerify();
+      const { id } = (request as any).user as { id: string };
+      const parsed = settingsSchema.safeParse(request.body);
+      if (!parsed.success) return reply.status(400).send({ error: 'Invalid input', details: parsed.error.flatten() });
+      const updated = await (prisma as any).user.update({ where: { id }, data: parsed.data });
+      return reply.send({ success: true, settings: { isPrivateProfile: updated.isPrivateProfile, emailReminders: updated.emailReminders, autoBackup: updated.autoBackup } });
+    } catch (err: any) {
+      console.error('Update settings error:', err);
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
+  // EXPORT: zip all user's images and stream as attachment
+  app.post('/export', async (request, reply) => {
+    try {
+      await (request as any).jwtVerify();
+      const { id: userId } = (request as any).user as { id: string };
+
+      const images = await (prisma as any).image.findMany({ where: { userId } });
+
+      // stream zip
+      reply.raw.setHeader('Content-Type', 'application/zip');
+      reply.raw.setHeader('Content-Disposition', `attachment; filename="ptitartist-${userId}.zip"`);
+
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      archive.on('error', (err: Error) => {
+        console.error('Archive error:', err);
+        try { reply.raw.end(); } catch (e) {}
+      });
+
+      archive.pipe(reply.raw);
+
+      for (const img of images) {
+        try {
+          let pathname: string | null = null;
+          try {
+            const parsed = new URL(img.url);
+            pathname = parsed.pathname;
+          } catch (e) {
+            const idx = img.url.indexOf('/uploads/');
+            if (idx >= 0) pathname = img.url.slice(idx);
+          }
+          if (!pathname) continue;
+          const filename = path.basename(pathname);
+          const filePath = path.join(process.cwd(), 'uploads', filename);
+          if (fs.existsSync(filePath)) {
+            archive.file(filePath, { name: filename });
+          }
+        } catch (err) {
+          console.error('Error adding file to archive:', err);
+        }
+      }
+
+      await archive.finalize();
+      // note: reply will end when archive stream finishes
+    } catch (err: any) {
+      console.error('Export error:', err);
+      return reply.status(500).send({ error: 'Internal server error during export' });
+    }
   });
 }
