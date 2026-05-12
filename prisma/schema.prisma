@@ -14,6 +14,12 @@ model User {
   lastName  String?
   age       Int?
   avatarUrl String?
+  // email confirmation / pending change
+  emailPending String?
+  emailConfirmToken String?
+  emailConfirmExpires DateTime?
+  // tokenVersion used to invalidate JWTs when rotating sessions/passwords
+  tokenVersion Int @default(0)
   // user preferences / settings
   isPrivateProfile Boolean  @default(true)
   emailReminders   Boolean  @default(false)
@@ -28,6 +34,7 @@ model Image {
   id        String   @id @default(uuid())
   url       String
   description String?
+  imageDescription String?
   createdAt DateTime @default(now())
   userId    String
   childId   String?

@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { config } from './config.js';
 import { authRoutes } from './routes/auth.js';
+import imagesRoutes from './routes/images.js';
 
 const app = Fastify({ logger: true }); 
 
@@ -21,17 +22,46 @@ const start = async () => {
     await app.register(cors, {
       origin: config.clientUrl,
       methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'x-description'],
+      // include common custom headers that frontends may send
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-description', 'x-image-description', 'x-child-id', 'content-length'],
       credentials: true,
     });
+
+    // dev-only request logger to help diagnose pending/OPTIONS issues
+    if (process.env.NODE_ENV !== 'production') {
+      app.addHook('onRequest', async (request, reply) => {
+        try {
+          console.log(`incoming ${request.method} ${request.url} from ${request.ip}`);
+        } catch {}
+      });
+    }
     const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-please-change';
-    await app.register(jwt, { secret: jwtSecret });
+    if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'dev-secret-please-change')) {
+      throw new Error('JWT_SECRET must be set in production');
+    }
+  await app.register(jwt, { secret: jwtSecret });
+  // session plugin that adds verifySession to requests (checks tokenVersion)
+  const sessionModule = await import('./plugins/session.js');
+  await app.register(sessionModule.default ?? sessionModule);
     await app.register(fastifyMultipart);
     await app.register(fastifyStatic, {
       root: uploadsDir,
       prefix: '/uploads/',
     });
-    await app.register(authRoutes);
+    // Basic security headers (lightweight, no extra dependency)
+    app.addHook('onSend', async (request, reply, payload) => {
+      reply.header('X-Content-Type-Options', 'nosniff');
+      reply.header('X-Frame-Options', 'DENY');
+      reply.header('Referrer-Policy', 'no-referrer');
+      reply.header('X-Permitted-Cross-Domain-Policies', 'none');
+      // HSTS only in production over HTTPS
+      if (process.env.NODE_ENV === 'production') {
+        reply.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+      }
+      return payload;
+    });
+  await app.register(authRoutes);
+  await app.register(imagesRoutes);
 
     app.get('/', async () => ({ message: 'Hello, World!' }));
 
