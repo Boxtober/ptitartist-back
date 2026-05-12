@@ -6,7 +6,7 @@ import { prisma } from '../plugins/prisma.js';
 import { createImageRecord, listImagesForUser, deleteImage } from '../services/imageService.js';
 import { z } from 'zod';
 import { sanitizeString } from '../utils/sanitize.js';
-import { sanitizeFilename, isAllowedImage } from '../utils/fileUtils.js';
+import { saveUpload, getUploadUrl } from '../utils/fileStorage.js';
 
 export default async function imagesRoutes(app: FastifyInstance) {
   app.post('/upload', async (request, reply) => {
@@ -20,36 +20,25 @@ export default async function imagesRoutes(app: FastifyInstance) {
       const fields: Record<string, string> = {};
       let fileMetadata: { filename: string } | null = null;
 
-      const uploadsDir = path.join(process.cwd(), 'uploads');
-      await fs.promises.mkdir(uploadsDir, { recursive: true });
-
       for await (const part of (request as any).parts()) {
         if (part.file) {
           if (!fileMetadata) {
             console.log('POST /upload: file part received, filename=', part.filename);
-
-            const safeOriginal = sanitizeFilename(part.filename);
-            if (!isAllowedImage(safeOriginal)) {
-              part.file.resume();
-              return reply.status(400).send({ error: 'Invalid file extension' });
+            try {
+              const saved = await saveUpload(part.file, part.filename, part.mimetype, { maxBytes: 10 * 1024 * 1024, allowedMimes: ['image/jpeg', 'image/png', 'image/webp'] });
+              savedFilePath = saved.localPath;
+              fileMetadata = { filename: saved.filename };
+              console.log('POST /upload: file written to', saved.localPath);
+            } catch (err: any) {
+              if (err && (err.code === 'FILE_TOO_LARGE' || err.message === 'FILE_TOO_LARGE')) return reply.status(413).send({ error: 'File too large' });
+              if (err && err.code === 'INVALID_MIME') return reply.status(400).send({ error: 'Invalid file type' });
+              if (err && err.code === 'INVALID_EXTENSION') return reply.status(400).send({ error: 'Invalid file extension' });
+              throw err;
             }
-
-            const filename = `${Date.now()}-${safeOriginal}`;
-            const localPath = path.join(uploadsDir, filename);
-
-            // Consume the file stream immediately — this unblocks the iterator
-            console.log('POST /upload: writing file to', localPath);
-            await pipeline(part.file, fs.createWriteStream(localPath));
-            console.log('POST /upload: file written');
-
-            savedFilePath = localPath;
-            fileMetadata = { filename };
           } else {
-            // extra files: drain and ignore
             part.file.resume();
           }
         } else {
-          // text field
           fields[part.fieldname] = part.value;
           console.log('POST /upload: field', part.fieldname, '=', part.value);
         }
@@ -85,16 +74,30 @@ export default async function imagesRoutes(app: FastifyInstance) {
         try { imageDescription = JSON.stringify(imageDescription); } catch (e) { imageDescription = String(imageDescription); }
       }
 
+      // Optional createdAt: accept from fields or header x-created-at (ISO string), validate
+      let createdAtField: string | undefined = fields['createdAt'];
+      if (!createdAtField && typeof (request as any).headers['x-created-at'] === 'string') createdAtField = (request as any).headers['x-created-at'];
+      let createdAt: Date | undefined;
+      if (createdAtField) {
+        const parsed = new Date(createdAtField);
+        if (isNaN(parsed.getTime())) {
+          return reply.status(400).send({ error: 'Invalid createdAt date' });
+        }
+        createdAt = parsed;
+      }
+
       // Sanitize
       if (typeof description === 'string') description = sanitizeString(description, 512);
       if (typeof imageDescription === 'string') imageDescription = sanitizeString(imageDescription, 1024);
 
+      const url = getUploadUrl(fileMetadata.filename);
       const image = await createImageRecord(
         userId,
         fileMetadata.filename,
         description,
         childId ?? null,
         imageDescription ?? null,
+        createdAt ?? null,
       );
       console.log('POST /upload: image record created id=', image.id);
 

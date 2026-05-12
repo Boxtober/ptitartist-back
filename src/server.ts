@@ -60,6 +60,17 @@ const start = async () => {
       }
       return payload;
     });
+      // Centralized error handler: hide internal messages in production
+      app.setErrorHandler((error: any, request, reply) => {
+        // log full error server-side
+        app.log.error(error);
+        const isProd = process.env.NODE_ENV === 'production';
+        const response: any = { error: 'internal_error' };
+        // In non-prod, include a short message to help debugging
+        if (!isProd) response.message = error?.message;
+        const status = (error && (error.statusCode || error.status)) ? (error.statusCode || error.status) : 500;
+        reply.status(status).send(response);
+      });
   await app.register(authRoutes);
   await app.register(imagesRoutes);
 

@@ -8,13 +8,17 @@ export async function createImageRecord(
   filename: string,
   description?: string | null,
   childId?: string | null,
-  imageDescription?: string | null
+  imageDescription?: string | null,
+  createdAt?: Date | string | null
 ) {
   const base = process.env.BASE_URL ?? 'http://localhost:3000';
   const data: any = { url: `${base}/uploads/${filename}`, userId };
   if (typeof description !== 'undefined') data.description = description ?? null;
   if (typeof childId !== 'undefined') data.childId = childId ?? null;
   if (typeof imageDescription !== 'undefined') data.imageDescription = imageDescription ?? null;
+  if (typeof createdAt !== 'undefined' && createdAt !== null) {
+    data.createdAt = (createdAt instanceof Date) ? createdAt : new Date(createdAt as string);
+  }
   return prisma.image.create({ data });
 }
 
